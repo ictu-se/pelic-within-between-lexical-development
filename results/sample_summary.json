@@ -1,0 +1,38 @@
+{
+  "n_texts": 3435,
+  "n_students": 364,
+  "n_questions": 694,
+  "level_counts": {
+    "3": 631,
+    "4": 1668,
+    "5": 1136
+  },
+  "question_type_counts": {
+    "-1": 9,
+    "1": 1889,
+    "2": 56,
+    "4": 1481
+  },
+  "l1_student_counts": {
+    "Arabic": 161,
+    "Korean": 70,
+    "Chinese": 54,
+    "Japanese": 17,
+    "Turkish": 14,
+    "Thai": 11,
+    "Spanish": 10,
+    "Taiwanese": 7,
+    "Portuguese": 6,
+    "French": 3,
+    "Other": 3,
+    "Russian": 2,
+    "Vietnamese": 1,
+    "Montenegrin": 1,
+    "Suundi": 1,
+    "Farsi": 1,
+    "English": 1,
+    "Mongol": 1
+  },
+  "exact_duplicate_rows_within_learner": 41,
+  "near_duplicate_rows_within_learner": 79
+}

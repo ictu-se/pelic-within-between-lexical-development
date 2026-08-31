@@ -1,0 +1,15 @@
+{
+  "dataset_commit": "c4526baeb8fb5d69732f9e2a8e1430b41ed38c53",
+  "eligibility": "writing; version 1; text_len >=100; levels 3-5; learner observed at >=2 levels",
+  "metrics": [
+    "mattr50",
+    "mtld",
+    "lexical_density",
+    "mean_log_frequency_content",
+    "rare_content_rate"
+  ],
+  "rarity_reference": "PELIC lemma frequency table",
+  "rare_threshold_per_million": 10.0,
+  "mattr_window": 50,
+  "mtld_threshold": 0.72
+}

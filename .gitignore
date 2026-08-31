@@ -1,0 +1,19 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+
+# PELIC is downloaded separately under its own licence.
+dataset_raw/
+
+# Row-level derived data retain anonymous corpus identifiers and are not shared.
+results/analysis_metrics.csv
+results/run_stdout.txt
+results/run_stderr.txt
+
+# Keep the replication repository separate from submission and working notes.
+manuscript_springer/
+EXPERIMENT_REPORT.md
+NOTE.md
+
+# LaTeX build products.

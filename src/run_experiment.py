@@ -252,7 +252,8 @@ def make_forest(results: pd.DataFrame) -> None:
     ax.set_xlabel("Standardized change per course level (95% CI)")
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig(FIGURES / "within_between_forest.png", dpi=220)
+    # High-resolution source suitable for full-width journal production.
+    fig.savefig(FIGURES / "within_between_forest.png", dpi=600)
     plt.close(fig)
 
 

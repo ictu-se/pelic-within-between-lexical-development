@@ -15,6 +15,12 @@ the official PELIC repository. Clone the dataset into
 BY-NC-ND 4.0. This repository does not redistribute learner texts, transformed
 texts, token sequences, or row-level derived data.
 
+```bash
+git clone https://github.com/ELI-Data-Mining-Group/PELIC-dataset.git dataset_raw/PELIC-dataset
+git -C dataset_raw/PELIC-dataset checkout c4526baeb8fb5d69732f9e2a8e1430b41ed38c53
+git -C dataset_raw/PELIC-dataset lfs pull
+```
+
 ## Reproduce the analysis
 
 Python 3.9 was used for the reported run.

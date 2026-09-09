@@ -18,3 +18,12 @@ NOTE.md
 PAPER_CHECK_REPORT.md
 
 # LaTeX build products.
+
+# Local manuscript preparation and editorial research.
+manuscript_jslw/
+manuscript_learn/
+journal_research_jslw/
+journal_learn_template/
+editor_article_samples/
+.env
+.env.*

@@ -43,3 +43,36 @@ commit and analysis constants are recorded in the generated run metadata.
 Only code, documentation, figures, and aggregate output tables should be made
 public. Do not commit the dataset directory or `results/analysis_metrics.csv`.
 Users must obtain PELIC from its official source and comply with its licence.
+
+## Direct within-between comparison
+
+The revised analysis is titled **Separating within-learner lexical change from
+between-learner course-level differences in L2 writing**. To reproduce the added
+post hoc contrasts and both manuscript figures, first run the primary experiment
+above to create the local row-level metrics, then run:
+
+```sh
+python3 src/compare_associations.py
+python3 src/plot_associations.py
+```
+
+The comparison script refits each primary model, checks convergence and agreement
+with the stored primary coefficients, and computes between-minus-within contrasts
+using their joint covariance. A separate Benjamini-Hochberg adjustment covers the
+five contrast tests. The aggregate output is `results/within_between_contrasts.csv`;
+figures are in `results/figures/`.
+
+MATTR and MTLD show positive within-learner associations. Their between-minus-within
+contrasts have adjusted p values of approximately .149 and .116, respectively.
+Neither meets the five-test FDR threshold; larger between-learner point estimates
+should not be described as an established difference.
+
+The experiment also includes chronology, learner-question clustering, and
+leave-one-text-out frequency checks. The historical `question_random_intercept`
+label in aggregate outputs denotes a variance component nested within learners,
+not a crossed prompt intercept shared across learners. No question identifier
+spans levels, so prompt-set differences remain confounded with level.
+
+Only aggregate results and reproducible research code are published here.
+Manuscript files, editorial correspondence, licensed corpus texts and row-level
+derived data are excluded. See `REPRODUCIBILITY.md` for the release inventory.

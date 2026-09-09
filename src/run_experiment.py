@@ -14,6 +14,7 @@ import json
 import math
 import re
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -37,13 +38,23 @@ METRICS = [
     "rare_content_rate",
 ]
 
+RARITY_SENSITIVITY_METRICS = [
+    "mean_log_frequency_content_loto",
+    "rare_content_rate_loto",
+]
+
 CONTENT_PREFIXES = ("NN", "VB", "JJ", "RB")
 WORD_RE = re.compile(r"^[A-Za-z]+(?:'[A-Za-z]+)?$")
 
 
-def load_frequency_reference() -> dict[str, float]:
+def load_frequency_reference() -> tuple[dict[str, float], dict[str, int], int]:
     freq = pd.read_csv(DATA / "corpus_stats" / "lemma_frequencies.csv")
-    return dict(zip(freq["lemma"].astype(str).str.lower(), freq["per_M"].astype(float)))
+    lemmas = freq["lemma"].astype(str).str.lower()
+    return (
+        dict(zip(lemmas, freq["per_M"].astype(float))),
+        dict(zip(lemmas, freq["frequency"].astype(int))),
+        int(freq["frequency"].sum()),
+    )
 
 
 def mark_near_duplicates(df: pd.DataFrame, normalized: pd.Series, threshold: float = 0.90) -> pd.Series:
@@ -109,7 +120,12 @@ def mtld(tokens: list[str]) -> float:
     ]))
 
 
-def parse_metrics(value: str, frequency_reference: dict[str, float]) -> dict[str, float]:
+def parse_metrics(
+    value: str,
+    frequency_reference: dict[str, float],
+    frequency_counts: dict[str, int],
+    corpus_token_count: int,
+) -> dict[str, float]:
     triples = ast.literal_eval(value)
     words: list[str] = []
     content: list[str] = []
@@ -122,6 +138,18 @@ def parse_metrics(value: str, frequency_reference: dict[str, float]) -> dict[str
             content.append(form)
     per_million = np.array([frequency_reference.get(w, 0.0) for w in content], dtype=float)
     log_frequency = np.log10(per_million + 0.1)
+    # Leave the current text out of both the numerator and denominator. This
+    # removes direct self-inclusion while retaining PELIC as the target-domain
+    # reference corpus.
+    text_counts = Counter(words)
+    loto_denominator = max(corpus_token_count - len(words), 1)
+    loto_per_million = np.array([
+        max(frequency_counts.get(w, 0) - text_counts.get(w, 0), 0)
+        / loto_denominator
+        * 1_000_000
+        for w in content
+    ], dtype=float)
+    loto_log_frequency = np.log10(loto_per_million + 0.1)
     return {
         "n_lexical_tokens": len(words),
         "n_content_tokens": len(content),
@@ -130,6 +158,12 @@ def parse_metrics(value: str, frequency_reference: dict[str, float]) -> dict[str
         "lexical_density": len(content) / len(words) if words else float("nan"),
         "mean_log_frequency_content": float(log_frequency.mean()) if len(log_frequency) else float("nan"),
         "rare_content_rate": float((per_million < 10.0).mean()) if len(per_million) else float("nan"),
+        "mean_log_frequency_content_loto": (
+            float(loto_log_frequency.mean()) if len(loto_log_frequency) else float("nan")
+        ),
+        "rare_content_rate_loto": (
+            float((loto_per_million < 10.0).mean()) if len(loto_per_million) else float("nan")
+        ),
     }
 
 
@@ -164,7 +198,12 @@ def load_sample() -> pd.DataFrame:
     return df.sort_values(["anon_id", "semester", "answer_id"]).reset_index(drop=True)
 
 
-def fit_hybrid(data: pd.DataFrame, metric: str, label: str) -> dict[str, object]:
+def fit_hybrid(
+    data: pd.DataFrame,
+    metric: str,
+    label: str,
+    question_random_intercept: bool = False,
+) -> dict[str, object]:
     d = data.dropna(subset=[metric]).copy()
     d["outcome_z"] = (d[metric] - d[metric].mean()) / d[metric].std(ddof=0)
     d["student_mean_level"] = d.groupby("anon_id")["level_id"].transform("mean")
@@ -172,7 +211,16 @@ def fit_hybrid(data: pd.DataFrame, metric: str, label: str) -> dict[str, object]
     d["level_between"] = d["student_mean_level"] - d["student_mean_level"].mean()
     d["log_len_z"] = (np.log(d["text_len"]) - np.log(d["text_len"]).mean()) / np.log(d["text_len"]).std(ddof=0)
     formula = "outcome_z ~ level_within + level_between + log_len_z + C(question_type) + C(L1_group)"
-    model = smf.mixedlm(formula, d, groups=d["anon_id"], re_formula="1")
+    # statsmodels constructs this variance component separately within each learner.
+    # It is a nested learner-question intercept, not a crossed shared-prompt effect.
+    vc_formula = {"question": "0+C(question_id)"} if question_random_intercept else None
+    model = smf.mixedlm(
+        formula,
+        d,
+        groups=d["anon_id"],
+        re_formula="1",
+        vc_formula=vc_formula,
+    )
     try:
         fit = model.fit(reml=False, method="lbfgs", maxiter=1000, disp=False)
         if not fit.converged:
@@ -198,8 +246,61 @@ def fit_hybrid(data: pd.DataFrame, metric: str, label: str) -> dict[str, object]
             "n_students": d["anon_id"].nunique(),
             "converged": bool(fit.converged),
             "aic": float(fit.aic),
+            "learner_intercept_variance": float(fit.cov_re.iloc[0, 0]),
+            "residual_variance": float(fit.scale),
+            "question_intercept_variance": (
+                float(fit.vcomp[0]) if question_random_intercept and len(fit.vcomp) else float("nan")
+            ),
         })
     return {"rows": rows, "fit": fit}
+
+
+def semester_order(value: str) -> int:
+    match = re.fullmatch(r"(\d{4})_(spring|summer|fall)", str(value))
+    if match is None:
+        raise ValueError(f"Unrecognized semester label: {value}")
+    term_order = {"spring": 0, "summer": 1, "fall": 2}
+    return int(match.group(1)) * 3 + term_order[match.group(2)]
+
+
+def chronology_audit(data: pd.DataFrame) -> tuple[dict[str, object], set[str]]:
+    d = data.copy()
+    d["semester_order"] = d["semester"].map(semester_order)
+    student_semester = (
+        d.groupby(["anon_id", "semester_order", "semester"])["level_id"]
+        .agg(lambda values: tuple(sorted(set(values))))
+        .reset_index()
+    )
+    strict_progressors: set[str] = set()
+    regressors: list[str] = []
+    same_semester_multiple: list[str] = []
+    gaps: list[int] = []
+    for learner, group in student_semester.groupby("anon_id"):
+        group = group.sort_values("semester_order")
+        level_sets = group["level_id"].tolist()
+        if any(len(levels) > 1 for levels in level_sets):
+            same_semester_multiple.append(str(learner))
+            continue
+        levels = [values[0] for values in level_sets]
+        if any(high < low for low, high in zip(levels, levels[1:])):
+            regressors.append(str(learner))
+            continue
+        if len(levels) >= 2 and levels[-1] > levels[0]:
+            strict_progressors.add(str(learner))
+            gaps.append(int(group["semester_order"].iloc[-1] - group["semester_order"].iloc[0]))
+    question_level_counts = data.groupby("question_id")["level_id"].nunique()
+    audit = {
+        "n_learners": int(data["anon_id"].nunique()),
+        "strict_progressor_learners": len(strict_progressors),
+        "learners_with_level_decrease": len(regressors),
+        "learners_with_multiple_levels_in_one_semester": len(same_semester_multiple),
+        "strict_progressor_texts": int(data["anon_id"].isin(strict_progressors).sum()),
+        "median_semester_gap_strict_progressors": float(np.median(gaps)),
+        "maximum_semester_gap_strict_progressors": int(max(gaps)),
+        "question_ids": int(data["question_id"].nunique()),
+        "question_ids_shared_across_levels": int((question_level_counts >= 2).sum()),
+    }
+    return audit, strict_progressors
 
 
 def fit_l1_slopes(data: pd.DataFrame, metric: str) -> pd.DataFrame:
@@ -291,11 +392,19 @@ def main() -> None:
     RESULTS.mkdir(parents=True, exist_ok=True)
     FIGURES.mkdir(parents=True, exist_ok=True)
     df = load_sample()
-    frequency_reference = load_frequency_reference()
-    metric_rows = [parse_metrics(v, frequency_reference) for v in df["tok_lem_POS"]]
+    frequency_reference, frequency_counts, corpus_token_count = load_frequency_reference()
+    metric_rows = [
+        parse_metrics(v, frequency_reference, frequency_counts, corpus_token_count)
+        for v in df["tok_lem_POS"]
+    ]
     metrics = pd.DataFrame(metric_rows)
     analysis = pd.concat([df.drop(columns=["text", "tok_lem_POS"]).reset_index(drop=True), metrics], axis=1)
     analysis.to_csv(RESULTS / "analysis_metrics.csv", index=False)
+
+    chronology, strict_progressor_ids = chronology_audit(analysis)
+    (RESULTS / "chronology_audit.json").write_text(
+        json.dumps(chronology, indent=2), encoding="utf-8"
+    )
 
     sample = {
         "n_texts": int(len(analysis)),
@@ -316,6 +425,8 @@ def main() -> None:
     rows = []
     for metric in METRICS:
         rows.extend(fit_hybrid(analysis, metric, "primary")["rows"])
+        strict_progressors = analysis[analysis["anon_id"].isin(strict_progressor_ids)]
+        rows.extend(fit_hybrid(strict_progressors, metric, "strict_progressors")["rows"])
         paragraph = analysis[analysis["question_type"] == "1"]
         eligible = paragraph.groupby("anon_id")["level_id"].nunique()
         paragraph = paragraph[paragraph["anon_id"].isin(eligible[eligible >= 2].index)]
@@ -338,6 +449,33 @@ def main() -> None:
         model_results.loc[mask, "p_fdr"] = multipletests(model_results.loc[mask, "p_value"], method="fdr_bh")[1]
     model_results.to_csv(RESULTS / "hybrid_model_results.csv", index=False)
 
+    question_rows = []
+    for metric in METRICS:
+        question_rows.extend(
+            fit_hybrid(
+                analysis,
+                metric,
+                "question_random_intercept",
+                question_random_intercept=True,
+            )["rows"]
+        )
+    question_results = pd.DataFrame(question_rows)
+    question_mask = question_results["term"] == "level_within"
+    question_results.loc[question_mask, "p_fdr"] = multipletests(
+        question_results.loc[question_mask, "p_value"], method="fdr_bh"
+    )[1]
+    question_results.to_csv(RESULTS / "question_random_intercept_results.csv", index=False)
+
+    rarity_rows = []
+    for metric in RARITY_SENSITIVITY_METRICS:
+        rarity_rows.extend(fit_hybrid(analysis, metric, "leave_one_text_out_reference")["rows"])
+    rarity_results = pd.DataFrame(rarity_rows)
+    rarity_mask = rarity_results["term"] == "level_within"
+    rarity_results.loc[rarity_mask, "p_fdr"] = multipletests(
+        rarity_results.loc[rarity_mask, "p_value"], method="fdr_bh"
+    )[1]
+    rarity_results.to_csv(RESULTS / "frequency_reference_sensitivity.csv", index=False)
+
     l1_results = pd.concat([fit_l1_slopes(analysis, metric) for metric in METRICS], ignore_index=True)
     l1_results.to_csv(RESULTS / "l1_within_slopes.csv", index=False)
     paired_level_changes(analysis).to_csv(RESULTS / "paired_level_changes.csv", index=False)
@@ -351,12 +489,14 @@ def main() -> None:
         "eligibility": "writing; version 1; text_len >=100; levels 3-5; learner observed at >=2 levels",
         "metrics": METRICS,
         "rarity_reference": "PELIC lemma frequency table",
+        "rarity_reference_sensitivity": "PELIC lemma frequency table with the current text removed",
         "rare_threshold_per_million": 10.0,
         "mattr_window": 50,
         "mtld_threshold": 0.72,
     }
     (RESULTS / "run_info.json").write_text(json.dumps(run_info, indent=2), encoding="utf-8")
     print(json.dumps(sample, indent=2))
+    print(json.dumps(chronology, indent=2))
     print(model_results[model_results["term"].isin(["level_within", "level_between"])].to_string(index=False))
 
 

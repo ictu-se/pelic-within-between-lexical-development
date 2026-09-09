@@ -9,6 +9,7 @@
     "rare_content_rate"
   ],
   "rarity_reference": "PELIC lemma frequency table",
+  "rarity_reference_sensitivity": "PELIC lemma frequency table with the current text removed",
   "rare_threshold_per_million": 10.0,
   "mattr_window": 50,
   "mtld_threshold": 0.72

@@ -1,0 +1,11 @@
+{
+  "n_learners": 364,
+  "strict_progressor_learners": 356,
+  "learners_with_level_decrease": 6,
+  "learners_with_multiple_levels_in_one_semester": 2,
+  "strict_progressor_texts": 3312,
+  "median_semester_gap_strict_progressors": 1.0,
+  "maximum_semester_gap_strict_progressors": 5,
+  "question_ids": 694,
+  "question_ids_shared_across_levels": 0
+}
